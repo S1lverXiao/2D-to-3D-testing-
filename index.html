@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Pic2Depth — 2D → Interactive 3D</title>
+<link rel="icon" href="data:,">
+<style>
+  /* Minimal, mobile-first look — focus on large touch targets and clarity */
+  :root{
+    --bg: #071224;
+    --panel: rgba(255,255,255,0.04);
+    --accent: #2dd4bf;
+    --muted: #9fb6bb;
+    --glass: rgba(255,255,255,0.03);
+    --white: #e6f3f2;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#051021);color:var(--white);font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; -webkit-font-smoothing:antialiased;}
+  #app{height:100vh;display:flex;flex-direction:column;gap:8px;box-sizing:border-box;padding:12px;}
+  header{display:flex;align-items:center;gap:12px}
+  h1{font-size:16px;margin:0;font-weight:600}
+  #stage{flex:1;position:relative;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.6);background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent)}
+  #glCanvas{width:100%;height:100%;display:block;touch-action:none}
+  /* Floating compact toolbar */
+  .toolbar{
+    position:absolute;left:12px;top:12px;display:flex;gap:8px;align-items:center;padding:8px;border-radius:12px;background:var(--glass);backdrop-filter:blur(8px);z-index:40;
+  }
+  .tool{
+    background:transparent;border:0;padding:10px;border-radius:10px;color:var(--white);font-weight:600;cursor:pointer;display:flex;gap:8px;align-items:center;
+    min-width:42px;min-height:42px;justify-content:center;
+  }
+  .tool.primary{background:linear-gradient(90deg,var(--accent),#6be3d9);color:#032426}
+  .tool.ghost{border:1px solid rgba(255,255,255,0.06)}
+  .sliderWrap{position:absolute;right:12px;top:12px;background:var(--glass);padding:8px;border-radius:12px;backdrop-filter:blur(8px);display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+  input[type="range"]{width:180px}
+  .miniLabel{font-size:12px;color:var(--muted);margin-bottom:4px}
+  .bottomBar{position:absolute;left:12px;right:12px;bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;border-radius:12px;background:linear-gradient(180deg,rgba(0,0,0,0.25),rgba(255,255,255,0.02));backdrop-filter:blur(6px);}
+  .hint{font-size:13px;color:var(--muted)}
+  .smallBtn{padding:8px 10px;border-radius:8px;border:0;background:rgba(255,255,255,0.04);color:var(--white);font-weight:600}
+  /* painting HUD */
+  .paintHud{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;display:none;align-items:center;gap:8px;padding:10px;border-radius:10px;background:rgba(0,0,0,0.45);color:var(--white);font-weight:700}
+  /* responsive */
+  @media(max-width:720px){ input[type="range"]{width:120px} .toolbar{left:10px;top:10px;padding:6px} }
+  /* simple file input hidden but accessible */
+  #fileInput{display:none}
+  /* friendly footer */
+  footer{font-size:12px;opacity:0.8;padding-top:6px;display:flex;justify-content:space-between}
+  .sr{position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden}
+</style>
+</head>
+<body>
+<div id="app" aria-live="polite">
+  <header>
+    <h1>Pic2Depth — 2D → Interactive 3D</h1>
+  </header>
+
+  <main id="stage" role="main">
+    <canvas id="glCanvas" aria-label="3D preview canvas"></canvas>
+
+    <!-- compact toolbar: Upload, Auto depth, Paint toggle, Export -->
+    <div class="toolbar" role="toolbar" aria-label="Controls">
+      <label class="tool ghost" id="uploadBtn" title="Upload image" for="fileInput">📷</label>
+      <input id="fileInput" type="file" accept="image/*" aria-label="Upload image" />
+      <button class="tool" id="autoDepthBtn" title="Auto-generate depth">⚡ Auto</button>
+      <button class="tool" id="paintToggle" title="Paint depth">🖌 Paint</button>
+      <button class="tool primary" id="exportBtn" title="Export PNG / GLB">⤓ Export</button>
+    </div>
+
+    <!-- right-side slider for thickness & detail -->
+    <div class="sliderWrap" aria-hidden="false">
+      <div class="miniLabel">Depth strength <span id="depthVal">0.30</span></div>
+      <input id="depthRange" type="range" min="0" max="0.9" step="0.01" value="0.30" />
+      <div class="miniLabel">Detail (subdiv)</div>
+      <input id="detailRange" type="range" min="24" max="320" step="8" value="120" />
+    </div>
+
+    <div class="paintHud" id="paintHud">Painting…</div>
+
+    <div class="bottomBar" aria-hidden="false">
+      <div class="hint" id="infoHint">Touch & drag to rotate • Pinch to zoom • Tap Paint then draw to fix depth.</div>
+      <div style="display:flex;gap:8px">
+        <button class="smallBtn" id="resetBtn">Reset</button>
+        <button class="smallBtn" id="sampleBtn">Sample Demo</button>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <div>Made small & fast — mobile-first</div>
+    <div>© Pic2Depth</div>
+  </footer>
+</div>
+
+<!-- THREE.js + GLTFExporter -->
+<script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/three@0.158.0/examples/js/exporters/GLTFExporter.js"></script>
+
+<script>
+/*
+  Pic2Depth — compact, mobile-first 2D→3D app
+  - Single-file: copy to index.html
+  - Features: upload image, auto depth (fast), paint depth, backfill, interactive 3D, export PNG+GLB
+  - Focus: minimal UX, performance, and robustness across phones (iPhone included)
+*/
+
+/* -------------------------
+   Utility & device helpers
+   ------------------------- */
+const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const el = id => document.getElementById(id);
+
+/* -------------------------
+   Elements
+   ------------------------- */
+const canvas = el('glCanvas');
+const uploadBtn = el('uploadBtn');
+const fileInput = el('fileInput');
+const autoDepthBtn = el('autoDepthBtn');
+const paintToggle = el('paintToggle');
+const exportBtn = el('exportBtn');
+const depthRange = el('depthRange');
+const detailRange = el('detailRange');
+const resetBtn = el('resetBtn');
+const sampleBtn = el('sampleBtn');
+const paintHud = el('paintHud');
+const depthValSpan = el('depthVal');
+const infoHint = el('infoHint');
+
+/* -------------------------
+   3D Scene (Three.js)
+   ------------------------- */
+let renderer, scene, camera, controls;
+let mainMesh = null, backMesh = null;
+let imageTexture = null, backTexture = null, dispTexture = null;
+let currentImage = null;
+
+/* init renderer */
+function initThree(){
+  renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: false});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  resizeRenderer();
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x061320);
+
+  camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.05, 10);
+  camera.position.set(0,0,1.4);
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.14;
+  controls.minDistance = 0.5;
+  controls.maxDistance = 3.5;
+  controls.rotateSpeed = 0.8;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.6);
+  dl.position.set(1,1,1);
+  scene.add(dl);
+
+  window.addEventListener('resize', resizeRenderer);
+  animate();
+}
+
+function resizeRenderer(){
+  const w = canvas.clientWidth || canvas.width || window.innerWidth;
+  const h = canvas.clientHeight || canvas.height || window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+/* animation loop */
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+/* -------------------------
+   Image + Depth handling
+   ------------------------- */
+
+function resetState(){
+  // remove meshes and textures
+  if(mainMesh){ scene.remove(mainMesh); safeDisposeMesh(mainMesh); mainMesh = null; }
+  if(backMesh){ scene.remove(backMesh); safeDisposeMesh(backMesh); backMesh = null; }
+  if(imageTexture){ imageTexture.dispose(); imageTexture = null; }
+  if(backTexture){ backTexture.dispose(); backTexture = null; }
+  if(dispTexture){ dispTexture.dispose(); dispTexture = null; }
+  currentImage = null;
+  infoHint.textContent = 'Upload an image to begin';
+}
+
+/* safe dispose utility */
+function safeDisposeMesh(m){
+  if(m.geometry) m.geometry.dispose();
+  if(m.material){
+    if(Array.isArray(m.material)){
+      m.material.forEach(mat => { if(mat.map) mat.map.dispose(); mat.dispose(); });
+    }else{
+      if(m.material.map) m.material.map.dispose();
+      m.material.dispose();
+    }
+  }
+}
+
+/* load image into an HTMLImageElement (handles file or url) */
+function loadImageFromFile(fileOrUrl){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = ()=> resolve(img);
+    img.onerror = (e) => reject(e);
+    if(fileOrUrl instanceof File){
+      const url = URL.createObjectURL(fileOrUrl);
+      img.src = url;
+      // revoke after load
+      img.onload = () => { URL.revokeObjectURL(img.src); resolve(img); };
+    } else {
+      img.src = fileOrUrl;
+    }
+  });
+}
+
+/* create a normalized canvas (image drawn to fit without upscaling too much) */
+function createCanvasForImage(img){
+  const maxDim = 1600; // cap size to keep mobile fast
+  let w = img.naturalWidth || img.width;
+  let h = img.naturalHeight || img.height;
+  const scale = Math.min(1, maxDim / Math.max(w,h));
+  if(scale < 1){
+    w = Math.round(w * scale); h = Math.round(h * scale);
+  }
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  return c;
+}
+
+/* -------------------------
+   Auto-depth (improved)
+   - luminance based + edge aware blur
+   ------------------------- */
+
+/*
+  Steps:
+  1. Compute luminance (Y) and invert (so bright -> near)
+  2. Compute gradient magnitude (edges)
+  3. Apply edge-aware blur: blur more in smooth areas, less across edges
+  This is a fast approximation (not a neural depth model) but works well for many drawings/photos.
+*/
+function computeAutoDepthCanvas(img){
+  const base = createCanvasForImage(img);
+  const w = base.width, h = base.height;
+  const ctx = base.getContext('2d');
+  let id = ctx.getImageData(0,0,w,h);
+  const d = id.data;
+  // luminance -> single channel depth (0..255) inverted
+  const lum = new Float32Array(w*h);
+  for(let i=0,j=0;i<d.length;i+=4,j++){
+    const r=d[i], g=d[i+1], b=d[i+2];
+    const y = 0.299*r + 0.587*g + 0.114*b;
+    lum[j] = 255 - y; // invert: bright=close
+  }
+  // compute simple sobel magnitude for edges
+  const gx = [-1,0,1,-2,0,2,-1,0,1];
+  const gy = [-1,-2,-1,0,0,0,1,2,1];
+  const mag = new Float32Array(w*h);
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      let sx=0, sy=0, k=0;
+      for(let oy=-1;oy<=1;oy++){
+        for(let ox=-1;ox<=1;ox++,k++){
+          const v = lum[(y+oy)*w + (x+ox)];
+          sx += gx[k]*v; sy += gy[k]*v;
+        }
+      }
+      const m = Math.hypot(sx, sy);
+      mag[y*w+x] = m;
+    }
+  }
+  // normalize mag
+  let maxm = 0;
+  for(let i=0;i<mag.length;i++) if(mag[i] > maxm) maxm = mag[i];
+  if(maxm < 1) maxm = 1;
+  for(let i=0;i<mag.length;i++) mag[i] = mag[i] / maxm;
+
+  // Edge-aware blur (box-blur with edge weight)
+  const out = new Uint8ClampedArray(w*h*4);
+  const radius = 3; // gentle smoothing
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let sum = 0, wsum = 0;
+      for(let oy=-radius;oy<=radius;oy++){
+        for(let ox=-radius;ox<=radius;ox++){
+          const nx = clamp(x+ox, 0, w-1);
+          const ny = clamp(y+oy, 0, h-1);
+          const idx = ny*w + nx;
+          const edgeFactor = 1 - mag[idx]; // less blur near edges
+          const weight = edgeFactor; // simple weighting
+          sum += lum[idx]*weight;
+          wsum += weight;
+        }
+      }
+      const v = Math.round(sum / Math.max(1, wsum));
+      const p = (y*w + x)*4;
+      out[p]=out[p+1]=out[p+2]=v; out[p+3]=255;
+    }
+  }
+  const outId = new ImageData(out, w, h);
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = w; outCanvas.height = h;
+  outCanvas.getContext('2d').putImageData(outId,0,0);
+  // small final gaussian-ish blur (fast separable)
+  return tinyBlur(outCanvas, 2);
+}
+
+/* small separable blur (fast) */
+function tinyBlur(canvas, radius){
+  if(radius <= 0) return canvas;
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  let src = ctx.getImageData(0,0,w,h);
+  const tmp = new Uint8ClampedArray(src.data.length);
+  // horizontal pass
+  const r = radius;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let rr=0, g=0, b=0, a=0, cnt=0;
+      for(let dx=-r;dx<=r;dx++){
+        const nx = clamp(x+dx, 0, w-1);
+        const p = (y*w + nx)*4;
+        rr += src.data[p]; g += src.data[p+1]; b += src.data[p+2]; a += src.data[p+3];
+        cnt++;
+      }
+      const outp = (y*w + x)*4;
+      tmp[outp] = rr/cnt; tmp[outp+1] = g/cnt; tmp[outp+2] = b/cnt; tmp[outp+3] = a/cnt;
+    }
+  }
+  // vertical
+  const final = new Uint8ClampedArray(src.data.length);
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      let rr=0,g=0,b=0,a=0,cnt=0;
+      for(let dy=-r;dy<=r;dy++){
+        const ny = clamp(y+dy,0,h-1);
+        const p = (ny*w + x)*4;
+        rr += tmp[p]; g += tmp[p+1]; b += tmp[p+2]; a += tmp[p+3]; cnt++;
+      }
+      const outp = (y*w + x)*4;
+      final[outp] = Math.round(rr/cnt); final[outp+1] = Math.round(g/cnt); final[outp+2] = Math.round(b/cnt); final[outp+3] = Math.round(a/cnt);
+    }
+  }
+  const outId = new ImageData(final, w, h);
+  const outCanvas = document.createElement('canvas'); outCanvas.width=w; outCanvas.height=h;
+  outCanvas.getContext('2d').putImageData(outId,0,0);
+  return outCanvas;
+}
+
+/* -------------------------
+   Backfill generation
+   - mirror + radial stretch + color harmony
+   ------------------------- */
+function generateBackfillCanvas(img){
+  // draw mirror then blend edges to minimize seams
+  const base = createCanvasForImage(img);
+  const w = base.width, h = base.height;
+  const ctx = base.getContext('2d');
+
+  // create mirrored copy on a temporary canvas
+  const tmp = document.createElement('canvas'); tmp.width=w; tmp.height=h;
+  const tctx = tmp.getContext('2d');
+  // draw mirrored horizontally
+  tctx.save();
+  tctx.translate(w, 0);
+  tctx.scale(-1,1);
+  tctx.drawImage(base, 0, 0, w, h);
+  tctx.restore();
+
+  // blend between center and border using radial alpha mask
+  const out = document.createElement('canvas'); out.width=w; out.height=h;
+  const octx = out.getContext('2d');
+  octx.fillStyle = '#000';
+  octx.fillRect(0,0,w,h);
+
+  // paint mirrored with soft vignette mask
+  const mask = octx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.25, w/2, h/2, Math.max(w,h)*0.75);
+  mask.addColorStop(0, 'rgba(255,255,255,1)');
+  mask.addColorStop(1, 'rgba(255,255,255,0)');
+  octx.save();
+  octx.globalCompositeOperation = 'source-over';
+  octx.globalAlpha = 1;
+  octx.drawImage(tctx.canvas, 0, 0, w, h);
+  octx.globalCompositeOperation = 'destination-in';
+  octx.fillStyle = mask;
+  octx.fillRect(0,0,w,h);
+  octx.restore();
+
+  // overlay a stretched-edge version to fill edges
+  const stretched = document.createElement('canvas'); stretched.width=w; stretched.height=h;
+  const sctx = stretched.getContext('2d');
+  // copy center narrow slice and stretch to edges
+  sctx.drawImage(base, w*0.4, 0, w*0.2, h, 0, 0, w, h);
+  // combine out + stretched softly
+  const comb = document.createElement('canvas'); comb.width=w; comb.height=h;
+  const cctx = comb.getContext('2d');
+  cctx.drawImage(sctx,0,0);
+  cctx.globalAlpha = 0.6;
+  cctx.drawImage(out,0,0);
+  cctx.globalAlpha = 1;
+
+  // slight color adjust to avoid exact mirror look
+  const id = cctx.getImageData(0,0,w,h);
+  for(let i=0;i<id.data.length;i+=4){
+    // tiny hue shift using simple channel mix
+    const r = id.data[i], g = id.data[i+1], b = id.data[i+2];
+    id.data[i] = clamp(r*0.98 + g*0.02, 0, 255);
+    id.data[i+1] = clamp(g*0.98 + b*0.01, 0, 255);
+    id.data[i+2] = clamp(b*0.98 + r*0.01, 0, 255);
+  }
+  cctx.putImageData(id, 0, 0);
+  return comb;
+}
+
+/* -------------------------
+   Mesh generation
+   ------------------------- */
+function buildMeshFromImage(imgCanvas, depthCanvas){
+  // remove previous
+  if(mainMesh){ scene.remove(mainMesh); safeDisposeMesh(mainMesh); mainMesh = null; }
+  if(backMesh){ scene.remove(backMesh); safeDisposeMesh(backMesh); backMesh = null; }
+
+  const w = imgCanvas.width, h = imgCanvas.height;
+  const aspect = w / h;
+  const planeH = 1.0;
+  const planeW = planeH * aspect;
+
+  // dynamic subdivisions tuned for device
+  const ideal = parseInt(detailRange.value, 10) || 120;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const segX = Math.max(8, Math.round(ideal * dpr));
+  const segY = Math.max(8, Math.round(segX / aspect));
+
+  const geometry = new THREE.PlaneGeometry(planeW, planeH, segX, segY);
+
+  // create displacement texture from depthCanvas
+  const dispTex = new THREE.CanvasTexture(depthCanvas);
+  dispTex.needsUpdate = true;
+  dispTex.minFilter = THREE.LinearFilter;
+  dispTex.magFilter = THREE.LinearFilter;
+  dispTex.wrapS = dispTex.wrapT = THREE.ClampToEdgeWrapping;
+  dispTexture = dispTex;
+
+  // create base texture (image)
+  const imgTex = new THREE.CanvasTexture(imgCanvas);
+  imgTex.needsUpdate = true;
+  imgTex.minFilter = THREE.LinearFilter;
+  imgTex.magFilter = THREE.LinearFilter;
+  imageTexture = imgTex;
+
+  // base material — displacement is applied in geometry via displacementMap
+  const baseMat = new THREE.MeshStandardMaterial({
+    map: imageTexture,
+    displacementMap: dispTex,
+    displacementScale: parseFloat(depthRange.value),
+    displacementBias: -parseFloat(depthRange.value) / 2,
+    roughness: 0.6,
+    metalness: 0.0,
+    side: THREE.FrontSide,
+  });
+
+  mainMesh = new THREE.Mesh(geometry, baseMat);
+  mainMesh.rotation.y = 0;
+  scene.add(mainMesh);
+
+  // back mesh: simple plane using backTexture — slightly behind the displaced mesh
+  const backTex = new THREE.CanvasTexture(generateBackfillCanvas(imgCanvas));
+  backTex.needsUpdate = true;
+  backTexture = backTex;
+
+  const backMat = new THREE.MeshStandardMaterial({
+    map: backTex,
+    side: THREE.BackSide,
+    roughness: 0.8
+  });
+
+  const backGeo = geometry.clone();
+  backMesh = new THREE.Mesh(backGeo, backMat);
+  // offset slightly backwards according to depth
+  const t = parseFloat(depthRange.value) || 0.3;
+  backMesh.position.z = -0.5 * t - 0.001;
+  scene.add(backMesh);
+}
+
+/* -------------------------
+   Painting UX
+   - maintain a painting canvas same size as depth canvas
+   - painting updates displacement texture incrementally (fast)
+   ------------------------- */
+let paintMode = false;
+let paintingCanvas = null;
+let paintingCtx = null;
+let isPainting = false;
+let lastPt = null; // for interpolation
+let brushSize = 44;
+let brushColor = 255; // white => closer
+let paintUndoStack = [];
+
+function startPainting(depthCanvas){
+  if(!depthCanvas) return;
+  paintMode = true;
+  paintHud.style.display = 'flex';
+  // ensure paintingCanvas exists (copy depth into it)
+  paintingCanvas = document.createElement('canvas');
+  paintingCanvas.width = depthCanvas.width;
+  paintingCanvas.height = depthCanvas.height;
+  paintingCtx = paintingCanvas.getContext('2d');
+  paintingCtx.drawImage(depthCanvas, 0, 0);
+  // add pointer listeners on canvas
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('pointerdown', onPointerDownPaint);
+  canvas.addEventListener('pointermove', onPointerMovePaint);
+  window.addEventListener('pointerup', onPointerUpPaint);
+  // quick push to undo
+  pushPaintUndo();
+}
+
+function stopPainting(){
+  paintMode = false;
+  paintHud.style.display = 'none';
+  canvas.style.touchAction = '';
+  canvas.removeEventListener('pointerdown', onPointerDownPaint);
+  canvas.removeEventListener('pointermove', onPointerMovePaint);
+  window.removeEventListener('pointerup', onPointerUpPaint);
+  // finalize: update displacement texture and rebuild mesh for smoothing
+  if(paintingCanvas) {
+    finalizePainting();
+  }
+}
+
+/* painting pointer handlers — map canvas coords to painting canvas UVs */
+function getCanvasUV(evt){
+  const rect = canvas.getBoundingClientRect();
+  const x = (evt.clientX - rect.left) / rect.width;
+  const y = (evt.clientY - rect.top) / rect.height;
+  return {u: clamp(x,0,1), v: clamp(y,0,1)};
+}
+
+function onPointerDownPaint(e){
+  if(e.button && e.button !== 0) return; // only left/pointer
+  isPainting = true;
+  lastPt = null;
+  const uv = getCanvasUV(e);
+  const x = Math.floor(uv.u * paintingCanvas.width);
+  const y = Math.floor(uv.v * paintingCanvas.height);
+  drawPaintPoint(x, y);
+}
+
+function onPointerMovePaint(e){
+  if(!isPainting) return;
+  const uv = getCanvasUV(e);
+  const x = Math.floor(uv.u * paintingCanvas.width);
+  const y = Math.floor(uv.v * paintingCanvas.height);
+  // interpolate from lastPt
+  if(lastPt){
+    drawLineInterpolated(lastPt.x, lastPt.y, x, y);
+  } else {
+    drawPaintPoint(x, y);
+  }
+  lastPt = {x,y};
+  // incremental update of displacement map for snappy feedback:
+  if(dispTexture){
+    dispTexture.image = paintingCanvas;
+    dispTexture.needsUpdate = true;
+  }
+}
+
+function onPointerUpPaint(e){
+  if(isPainting){
+    isPainting = false;
+    lastPt = null;
+    // push undo snapshot
+    pushPaintUndo();
+    // finalize (smooth & rebuild) after short delay
+    setTimeout(finalizePainting, 120);
+  }
+}
+
+/* paint primitives */
+function drawPaintPoint(x,y){
+  paintingCtx.fillStyle = `rgb(${brushColor},${brushColor},${brushColor})`;
+  paintingCtx.beginPath();
+  paintingCtx.arc(x,y,brushSize/2,0,Math.PI*2);
+  paintingCtx.fill();
+}
+function drawLineInterpolated(x1,y1,x2,y2){
+  const dx = x2 - x1, dy = y2 - y1;
+  const dist = Math.hypot(dx,dy);
+  const steps = Math.max(1, Math.floor(dist / (brushSize * 0.3)));
+  for(let i=0;i<=steps;i++){
+    const t = i/steps;
+    const xi = Math.round(x1 + dx * t), yi = Math.round(y1 + dy * t);
+    drawPaintPoint(xi, yi);
+  }
+}
+
+/* push/undo */
+function pushPaintUndo(){
+  if(!paintingCanvas) return;
+  try{
+    // lightweight: store ImageData
+    const id = paintingCtx.getImageData(0,0,paintingCanvas.width,paintingCanvas.height);
+    paintUndoStack.push(id);
+    if(paintUndoStack.length > 10) paintUndoStack.shift();
+  }catch(e){
+    // some mobile browsers may restrict imageData size — ignore if failing
+  }
+}
+function undoPaint(){
+  if(!paintUndoStack.length || !paintingCanvas) return;
+  const id = paintUndoStack.pop();
+  paintingCtx.putImageData(id,0,0);
+  if(dispTexture){ dispTexture.image = paintingCanvas; dispTexture.needsUpdate = true; }
+  // rebuild finalized mesh after undo
+  setTimeout(finalizePainting, 80);
+}
+
+/* finalize painting: apply slight blur & rebuild mesh displacement */
+function finalizePainting(){
+  if(!paintingCanvas) return;
+  // slight blur to smooth strokes
+  const smooth = tinyBlur(paintingCanvas, 1);
+  const ctx = paintingCtx;
+  ctx.clearRect(0,0,paintingCanvas.width,paintingCanvas.height);
+  ctx.drawImage(smooth,0,0);
+  // update texture used by mesh
+  if(dispTexture){
+    dispTexture.image = paintingCanvas;
+    dispTexture.needsUpdate = true;
+  }
+  // rebuild mesh for updated subdivisions and displacement
+  // but we need original imageCanvas for textures; save them in closure
+  if(currentImage && currentImage.canvas && currentImage.depthCanvas){
+    buildMeshFromImage(currentImage.canvas, paintingCanvas);
+  }
+}
+
+/* -------------------------
+   Controls & UI wiring
+   ------------------------- */
+
+fileInput.addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  loadAndSetupImage(f);
+});
+
+uploadBtn.addEventListener('click', ()=> fileInput.click());
+
+sampleBtn.addEventListener('click', async ()=>{
+  // friendly royalty-free demo image (unsplash), small enough
+  const demoUrl = 'https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d?q=80&w=1200&auto=format&fit=crop';
+  loadAndSetupImage(demoUrl).catch(err=>console.warn('Demo failed',err));
+});
+
+async function loadAndSetupImage(fileOrUrl){
+  try{
+    resetState();
+    infoHint.textContent = 'Loading image…';
+    const img = await loadImageFromFile(fileOrUrl);
+    // create working canvas (scaled to max dimension)
+    const imageCanvas = createCanvasForImage(img);
+    // compute auto depth
+    infoHint.textContent = 'Computing depth…';
+    const depthCanvas = computeAutoDepthCanvas(img);
+    // keep currentImage info
+    currentImage = { img, canvas: imageCanvas, depthCanvas };
+    // create initial paint canvas (copy depth)
+    paintingCanvas = document.createElement('canvas');
+    paintingCanvas.width = depthCanvas.width;
+    paintingCanvas.height = depthCanvas.height;
+    paintingCtx = paintingCanvas.getContext('2d');
+    paintingCtx.drawImage(depthCanvas, 0,0);
+    // build meshes
+    buildMeshFromImage(imageCanvas, paintingCanvas);
+    // center camera
+    controls.reset();
+    controls.target.set(0,0,0);
+    camera.position.set(0,0,1.4);
+    infoHint.textContent = 'Loaded • Drag to rotate • Tap Paint to refine';
+  }catch(err){
+    console.error(err);
+    infoHint.textContent = 'Error loading image';
+    alert('Could not load image — try a different file or check permissions.');
+  }
+}
+
+/* auto depth button */
+autoDepthBtn.addEventListener('click', async ()=>{
+  if(!currentImage) return alert('Load an image first.');
+  infoHint.textContent = 'Recomputing auto depth…';
+  const depthCanvas = computeAutoDepthCanvas(currentImage.img);
+  // replace painting canvas with auto depth
+  paintingCanvas.width = depthCanvas.width; paintingCanvas.height = depthCanvas.height;
+  paintingCtx = paintingCanvas.getContext('2d');
+  paintingCtx.drawImage(depthCanvas,0,0);
+  // rebuild mesh
+  buildMeshFromImage(currentImage.canvas, paintingCanvas);
+  infoHint.textContent = 'Auto depth applied';
+});
+
+/* paint toggle */
+paintToggle.addEventListener('click', ()=>{
+  if(!currentImage) { alert('Load an image first'); return; }
+  if(!paintMode){
+    startPainting(currentImage.depthCanvas || paintingCanvas);
+    paintToggle.classList.add('primary');
+    paintToggle.textContent = '✖ Stop';
+  } else {
+    stopPainting();
+    paintToggle.classList.remove('primary');
+    paintToggle.textContent = '🖌 Paint';
+  }
+});
+
+/* reset button */
+resetBtn.addEventListener('click', ()=>{
+  if(!currentImage) return;
+  if(confirm('Reset to original auto-depth and view?')){
+    paintingCanvas = document.createElement('canvas');
+    paintingCanvas.width = currentImage.depthCanvas.width;
+    paintingCanvas.height = currentImage.depthCanvas.height;
+    paintingCtx = paintingCanvas.getContext('2d');
+    paintingCtx.drawImage(currentImage.depthCanvas,0,0);
+    buildMeshFromImage(currentImage.canvas, paintingCanvas);
+    infoHint.textContent = 'Reset';
+  }
+});
+
+/* depth / detail sliders */
+depthRange.addEventListener('input', ()=>{
+  depthValSpan.textContent = depthRange.value;
+  if(mainMesh){
+    mainMesh.material.displacementScale = parseFloat(depthRange.value);
+    if(backMesh) backMesh.position.z = -0.5 * parseFloat(depthRange.value) - 0.001;
+  }
+});
+detailRange.addEventListener('change', ()=>{
+  if(!currentImage) return;
+  // rebuild mesh with different subdivision
+  buildMeshFromImage(currentImage.canvas, paintingCanvas);
+});
+
+/* export (PNG screenshot or GLB) */
+exportBtn.addEventListener('click', async ()=>{
+  if(!mainMesh) return alert('Nothing to export — load an image first.');
+  const want = prompt('Type "png" to save image, "glb" to export model, or "both"','png');
+  if(!want) return;
+  const mode = want.toLowerCase();
+  if(mode === 'png' || mode === 'both'){
+    // screenshot the renderer
+    renderer.domElement.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'pic2depth.png'; a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+  if(mode === 'glb' || mode === 'both'){
+    // export glb using GLTFExporter (client-side)
+    const exporter = new THREE.GLTFExporter();
+    // clone scene subset (mesh + texture)
+    const exportScene = new THREE.Scene();
+    const cloneMain = mainMesh.clone();
+    // ensure textures are copied
+    cloneMain.material = cloneMain.material.clone();
+    if(cloneMain.material.map) cloneMain.material.map = cloneMain.material.map.clone();
+    // bake displacement to geometry? for speed we export as-is (some viewers won't support displacementMap)
+    // so we create a baked geometry by applying displacement on CPU quickly for export:
+    try{
+      const baked = bakeGeometryDisplacement(mainMesh, paintingCanvas, parseFloat(depthRange.value));
+      cloneMain.geometry = baked;
+      exportScene.add(cloneMain);
+      exporter.parse(exportScene, result => {
+        if(result instanceof ArrayBuffer){
+          const blob = new Blob([result], {type: 'application/octet-stream'});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = 'pic2depth.glb'; a.click();
+          URL.revokeObjectURL(url);
+        } else {
+          const str = JSON.stringify(result);
+          const blob = new Blob([str], {type: 'application/json'});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url; a.download = 'pic2depth.gltf'; a.click();
+          URL.revokeObjectURL(url);
+        }
+      }, {binary: true});
+    }catch(err){
+      console.warn('GLB export failed:', err);
+      alert('Export failed — try "png" instead. ('+err.message+')');
+    }
+  }
+});
+
+/* Bake displacement onto a cloned geometry (CPU) for export
+   - This reads displacement map (canvas) and offsets vertices by depth
+*/
+function bakeGeometryDisplacement(mesh, dispCanvas, scale){
+  const geo = mesh.geometry.clone();
+  geo.computeBoundingBox();
+  const pos = geo.attributes.position;
+  const uvs = geo.attributes.uv;
+  const w = dispCanvas.width, h = dispCanvas.height;
+  const ctx = dispCanvas.getContext('2d');
+  const id = ctx.getImageData(0,0,w,h).data;
+  for(let i=0;i<pos.count;i++){
+    const u = uvs.getX(i), v = uvs.getY(i);
+    // flip v because canvas y=0 is top
+    const x = Math.round(u * (w-1));
+    const y = Math.round((1 - v) * (h-1));
+    const idx = (y*w + x) * 4;
+    const depth = id[idx] / 255.0; // 0..1
+    const z = (depth - 0.5) * scale; // center around 0
+    pos.setZ(i, pos.getZ(i) + z);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/* -------------------------
+   startup
+   ------------------------- */
+initThree();
+infoHint.textContent = 'Tap sample demo or upload an image to start';
+
+/* keyboard shortcuts for desktop convenience */
+window.addEventListener('keydown', (e) => {
+  if(e.key === 'p') paintToggle.click();
+  if(e.key === 'e') exportBtn.click();
+  if(e.key === 'u') uploadBtn.click();
+});
+
+/* small helpers for accessibility */
+fileInput.addEventListener('click', (e) => e.stopPropagation());
+
+/* End of app */
+</script>
+</body>
+</html>
