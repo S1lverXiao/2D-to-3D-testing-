@@ -1,0 +1,228 @@
+/* Reset and base */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  background: #f7f8fa;
+  color: #222;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: center;
+  padding: 20px 15px;
+}
+
+main {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+h1 {
+  font-weight: 700;
+  margin: 0;
+  font-size: 1.9rem;
+  text-align: center;
+  color: #222;
+  user-select: none;
+}
+
+p.description {
+  font-size: 1rem;
+  color: #555;
+  margin: 0;
+  text-align: center;
+  user-select: none;
+}
+
+/* Upload button */
+.upload-label {
+  background-color: #007aff;
+  color: white;
+  padding: 12px 28px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.35);
+  transition: background-color 0.25s ease;
+  text-align: center;
+}
+.upload-label:hover,
+.upload-label:focus-visible {
+  background-color: #005ecb;
+  outline: none;
+}
+input[type="file"] {
+  display: none;
+}
+
+/* Secondary button (edit depth) */
+.secondary-btn {
+  background-color: #0062cc;
+  color: white;
+  padding: 12px 28px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 4px 12px rgba(0, 98, 204, 0.35);
+  transition: background-color 0.25s ease;
+  text-align: center;
+}
+.secondary-btn:hover,
+.secondary-btn:focus-visible {
+  background-color: #005bb5;
+  outline: none;
+}
+
+/* Convert button */
+.convert-btn {
+  background-color: #28a745;
+  color: white;
+  font-weight: 600;
+  font-size: 1.1rem;
+  padding: 14px 0;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+  transition: background-color 0.3s ease;
+  user-select: none;
+}
+.convert-btn:disabled {
+  background-color: #94d3a2;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.convert-btn:hover:not(:disabled),
+.convert-btn:focus-visible:not(:disabled) {
+  background-color: #1e7e34;
+  outline: none;
+}
+
+/* Export buttons */
+.export-btn {
+  background-color: #007bff;
+  color: white;
+  font-weight: 600;
+  font-size: 1.1rem;
+  padding: 14px 0;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4);
+  transition: background-color 0.3s ease;
+  user-select: none;
+  margin-top: 10px;
+}
+.export-btn:hover,
+.export-btn:focus-visible {
+  background-color: #0056b3;
+  outline: none;
+}
+
+/* Preview container */
+.preview-container {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 2px dashed #ccc;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background-color: #fff;
+  position: relative;
+}
+
+/* Placeholder text */
+.preview-placeholder {
+  font-size: 0.95rem;
+  color: #aaa;
+  text-align: center;
+  padding: 12px;
+  user-select: none;
+}
+
+/* Preview image */
+.preview-container img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Painting controls (brush/eraser) */
+.paint-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.paint-btn {
+  background-color: #6c757d;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 5px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  border: none;
+}
+.paint-btn.active {
+  background-color: #343a40;
+}
+
+/* Result container (WebGL canvas) */
+.result-container {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+  background: #000;
+  position: relative;
+  user-select: none;
+  margin-top: 20px;
+}
+
+/* Footer */
+footer {
+  margin-top: auto;
+  font-size: 0.8rem;
+  color: #888;
+  user-select: none;
+  text-align: center;
+  padding-bottom: 10px;
+}
+
+/* Responsive layout for wider screens */
+@media (min-width: 768px) {
+  main {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 30px;
+    max-width: none;
+  }
+  .preview-container, .result-container {
+    width: 45%;
+    margin-top: 0;
+  }
+  .result-container {
+    margin-left: 20px;
+  }
+  /* Make buttons full-width within each column */
+  .convert-btn, .secondary-btn, .export-btn {
+    width: 100%;
+  }
+}
