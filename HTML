@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>2D to 3D Converter</title>
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="css/style.css" />
+
+  <!-- Main app script as ES module -->
+  <script type="module" src="js/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>2D to 3D Converter</h1>
+    <p class="description">Upload an image to see it transformed into a 3D mesh.</p>
+
+    <!-- Image upload -->
+    <label for="image-upload" class="upload-label" aria-label="Upload Image">Upload Image</label>
+    <input type="file" id="image-upload" accept="image/*" />
+
+    <!-- Preview area -->
+    <div class="preview-container" id="preview-container" aria-live="polite" aria-label="Image preview area">
+      <div class="preview-placeholder">No image selected</div>
+    </div>
+
+    <!-- Control buttons -->
+    <button id="edit-depth-btn" class="secondary-btn" disabled>Edit Depth Map</button>
+    <button id="convert-btn" class="convert-btn" disabled>Convert to 3D</button>
+    <button id="done-edit-btn" class="convert-btn" style="display:none;">Done Editing</button>
+
+    <!-- Painting controls (shown during edit mode) -->
+    <div class="paint-controls" id="paint-controls" style="display:none;">
+      <button id="brush-btn" class="paint-btn">Brush</button>
+      <button id="eraser-btn" class="paint-btn">Eraser</button>
+      <label for="brush-size">Size:</label>
+      <input type="range" id="brush-size" min="1" max="50" value="20" />
+    </div>
+
+    <!-- Export buttons (shown after conversion) -->
+    <button id="download-png-btn" class="export-btn" style="display:none;">Download PNG</button>
+    <button id="download-glb-btn" class="export-btn" style="display:none;">Download 3D (GLB)</button>
+
+    <!-- 3D result area -->
+    <div class="result-container" id="result-container" aria-label="3D model output area"></div>
+  </main>
+
+  <footer>
+    &copy; 2025 2D to 3D Converter — Built with WebGL for GitHub Pages
+  </footer>
+</body>
+</html>
