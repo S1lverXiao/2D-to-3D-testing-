@@ -1,400 +1,209 @@
-// 2D-to-3D Converter - main JavaScript
-// Uses Three.js (r150) to generate a depth-based 3D mesh from a 2D image.
-
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js';
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/controls/OrbitControls.js';
-import { GLTFExporter } from 'https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/exporters/GLTFExporter.js';
-
-document.addEventListener("DOMContentLoaded", () => {
-  // Get DOM elements
-  const uploadInput    = document.getElementById("image-upload");
+document.addEventListener("DOMContentLoaded", async () => {
+  const uploadInput   = document.getElementById("image-upload");
+  const convertBtn    = document.getElementById("convert-btn");
+  const exportBtn     = document.getElementById("export-btn");
   const previewContainer = document.getElementById("preview-container");
-  const convertBtn     = document.getElementById("convert-btn");
-  const editBtn        = document.getElementById("edit-depth-btn");
-  const doneEditBtn    = document.getElementById("done-edit-btn");
-  const downloadPNGBtn = document.getElementById("download-png-btn");
-  const downloadGLBBtn = document.getElementById("download-glb-btn");
-  const resultContainer= document.getElementById("result-container");
+  const resultContainer  = document.getElementById("result-container");
 
-  // Canvas for depth editing
-  let depthCanvas = null;
-  let depthCtx = null;
+  let uploadedImageData = null; // Data URL of the uploaded image
+  let renderer, scene, camera, mesh, animationId;
 
-  // State variables
-  let uploadedImage = null;  // Data URL of uploaded image
-  let hasEdited = false;
-  let editing = false;
-
-  // Three.js variables
-  let renderer, scene, camera, controls;
-  let mesh3D = null;
-  let animationId = null;
-
-  // Reset the interface and state
-  function resetAll() {
-    // Clear preview and 3D scene
+  // Reset the preview and 3D scene
+  function resetPreview() {
     previewContainer.innerHTML = '<div class="preview-placeholder">No image selected</div>';
-    uploadedImage = null;
-    hasEdited = false;
-    editing = false;
-    clearThreeScene();
-    // Disable buttons
     convertBtn.disabled = true;
-    editBtn.disabled = true;
-    downloadPNGBtn.style.display = 'none';
-    downloadGLBBtn.style.display = 'none';
-    convertBtn.textContent = "Convert to 3D";
-    editBtn.style.display = 'inline-block';
-    convertBtn.style.display = 'inline-block';
-    doneEditBtn.style.display = 'none';
-  }
-
-  function clearThreeScene() {
-    // Stop any animation loop
+    exportBtn.disabled = true;
+    if (renderer) {
+      renderer.dispose();
+      renderer = null;
+    }
     if (animationId) {
       cancelAnimationFrame(animationId);
       animationId = null;
     }
-    // Dispose renderer and remove from DOM
-    if (renderer) {
-      renderer.dispose();
-      if (renderer.domElement && renderer.domElement.parentNode) {
-        renderer.domElement.parentNode.removeChild(renderer.domElement);
-      }
-      renderer = null;
-    }
-    scene = camera = controls = null;
-    mesh3D = null;
+    resultContainer.innerHTML = "";
+    uploadedImageData = null;
   }
 
-  // Handle image upload
+  // Handle file upload and show preview
   uploadInput.addEventListener("change", (event) => {
     const file = event.target.files[0];
-    if (!file) {
-      resetAll();
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
+    if (!file || !file.type.startsWith("image/")) {
       alert("Please upload a valid image file.");
-      resetAll();
+      resetPreview();
       return;
     }
-    // Read the file into a Data URL
     const reader = new FileReader();
     reader.onload = (e) => {
-      uploadedImage = e.target.result;
-      displayImagePreview(uploadedImage);
+      uploadedImageData = e.target.result; // e.g. "data:image/png;base64,..." 
+
+      // Display the image in the preview area
+      previewContainer.innerHTML = "";
+      const img = new Image();
+      img.src = uploadedImageData;
+      img.alt = "Uploaded image preview";
+      previewContainer.appendChild(img);
+
+      // Enable the Convert button
       convertBtn.disabled = false;
-      editBtn.disabled = false;
-      // Reset any previous 3D rendering
-      clearThreeScene();
-      downloadPNGBtn.style.display = 'none';
-      downloadGLBBtn.style.display = 'none';
+      exportBtn.disabled = true;
     };
     reader.readAsDataURL(file);
   });
 
-  // Display the uploaded image in the preview container
-  function displayImagePreview(dataURL) {
-    previewContainer.innerHTML = "";
-    const img = document.createElement("img");
-    img.id = "preview-image";
-    img.src = dataURL;
-    img.alt = "Uploaded Image";
-    img.style.maxWidth = "100%";
-    img.style.maxHeight = "100%";
-    previewContainer.appendChild(img);
-  }
-
-  // Enter depth-edit mode (overlay grayscale canvas)
-  editBtn.addEventListener("click", () => {
-    if (!uploadedImage) return;
-    const img = document.getElementById("preview-image");
-    if (!img) return;
-    // Hide the preview image
-    img.style.visibility = "hidden";
-
-    // Create depth editing canvas if not yet created
-    if (!depthCanvas) {
-      depthCanvas = document.createElement("canvas");
-      depthCanvas.id = "edit-canvas";
-      depthCanvas.style.position = "absolute";
-      depthCanvas.style.top = "0";
-      depthCanvas.style.left = "0";
-      depthCanvas.style.width = "100%";
-      depthCanvas.style.height = "100%";
-      depthCanvas.style.cursor = "crosshair";
-      previewContainer.appendChild(depthCanvas);
-      depthCtx = depthCanvas.getContext("2d");
-    }
-    // Match canvas size to image resolution
-    const width = img.naturalWidth;
-    const height = img.naturalHeight;
-    depthCanvas.width = width;
-    depthCanvas.height = height;
-
-    // Draw the image in grayscale on the canvas
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    const tempCtx = tempCanvas.getContext("2d");
-    tempCtx.drawImage(img, 0, 0, width, height);
-    const imgData = tempCtx.getImageData(0, 0, width, height);
-    for (let i = 0; i < imgData.data.length; i += 4) {
-      const r = imgData.data[i], g = imgData.data[i+1], b = imgData.data[i+2];
-      const lum = 0.299*r + 0.587*g + 0.114*b;
-      imgData.data[i] = imgData.data[i+1] = imgData.data[i+2] = lum;
-    }
-    depthCtx.putImageData(imgData, 0, 0);
-
-    // Show the canvas overlay
-    depthCanvas.style.display = "block";
-    editing = true;
-    document.getElementById("paint-controls").style.display = "flex";
-    doneEditBtn.style.display = "inline-block";
-    convertBtn.style.display = "none";
-    editBtn.style.display = "none";
-
-    // Painting state
-    let isDrawing = false;
-    let brushColor = "#000000"; // paint black by default
-    let brushSize = 20;
-    const brushSizeInput = document.getElementById("brush-size");
-    brushSizeInput.value = brushSize;
-    brushSizeInput.addEventListener("input", (e) => {
-      brushSize = e.target.value;
-    });
-
-    // Brush/Eraser toggles
-    const brushButton = document.getElementById("brush-btn");
-    const eraserButton = document.getElementById("eraser-btn");
-    function setActiveTool(tool) {
-      brushColor = (tool === "brush") ? "#000000" : "#ffffff";
-      if (tool === "brush") {
-        brushButton.classList.add("active");
-        eraserButton.classList.remove("active");
-      } else {
-        eraserButton.classList.add("active");
-        brushButton.classList.remove("active");
-      }
-    }
-    brushButton.addEventListener("click", () => setActiveTool("brush"));
-    eraserButton.addEventListener("click", () => setActiveTool("eraser"));
-    // Default to brush
-    setActiveTool("brush");
-
-    // Drawing handlers (pointer events for mouse/touch)
-    depthCanvas.addEventListener("pointerdown", (ev) => {
-      isDrawing = true;
-      draw(ev);
-    });
-    depthCanvas.addEventListener("pointermove", (ev) => {
-      if (isDrawing) draw(ev);
-    });
-    depthCanvas.addEventListener("pointerup", () => { isDrawing = false; hasEdited = true; });
-    depthCanvas.addEventListener("pointerleave", () => { isDrawing = false; });
-
-    function draw(ev) {
-      const rect = depthCanvas.getBoundingClientRect();
-      const x = (ev.clientX - rect.left) * (depthCanvas.width / rect.width);
-      const y = (ev.clientY - rect.top)  * (depthCanvas.height / rect.height);
-      depthCtx.fillStyle = brushColor;
-      depthCtx.beginPath();
-      depthCtx.arc(x, y, brushSize, 0, 2 * Math.PI);
-      depthCtx.fill();
-    }
-  });
-
-  // Exit edit mode and reveal preview image again
-  doneEditBtn.addEventListener("click", () => {
-    if (!editing) return;
-    editing = false;
-    depthCanvas.style.display = "none";
-    document.getElementById("preview-image").style.visibility = "visible";
-    doneEditBtn.style.display = "none";
-    document.getElementById("paint-controls").style.display = "none";
-    convertBtn.style.display = "inline-block";
-    editBtn.style.display = "inline-block";
-  });
-
-  // Convert button: generate 3D mesh
-  convertBtn.addEventListener("click", () => {
-    if (!uploadedImage) return;
+  // Convert the 2D image into a 3D model
+  convertBtn.addEventListener("click", async () => {
+    if (!uploadedImageData) return;
     convertBtn.disabled = true;
-    convertBtn.textContent = "Converting...";
-    create3DFromImage().then(() => {
-      convertBtn.textContent = "Convert to 3D";
-      convertBtn.disabled = false;
-      downloadPNGBtn.style.display = 'block';
-      downloadGLBBtn.style.display = 'block';
-    }).catch((err) => {
-      alert("Conversion failed: " + err);
-      console.error(err);
-      convertBtn.textContent = "Convert to 3D";
-      convertBtn.disabled = false;
-    });
-  });
+    convertBtn.textContent = "Processing...";
 
-  // Core function: create 3D mesh from the image (using depth map)
-  async function create3DFromImage() {
-    let depthData, imgWidth, imgHeight;
-    // Prepare grayscale depth data from either edited canvas or original image
-    if (hasEdited) {
-      // Use canvas data (already grayscale with painting)
-      imgWidth = depthCanvas.width;
-      imgHeight = depthCanvas.height;
-      depthData = depthCtx.getImageData(0, 0, imgWidth, imgHeight).data;
-    } else {
-      // Auto-generate grayscale from uploaded image
-      const imageElem = new Image();
-      imageElem.src = uploadedImage;
-      await imageElem.decode();
-      // Optionally downscale for performance
-      const maxDim = 512;
-      let scale = 1;
-      if (imageElem.naturalWidth > maxDim || imageElem.naturalHeight > maxDim) {
-        scale = Math.min(maxDim / imageElem.naturalWidth, maxDim / imageElem.naturalHeight);
-      }
-      imgWidth = Math.floor(imageElem.naturalWidth * scale);
-      imgHeight= Math.floor(imageElem.naturalHeight * scale);
-      const tempCanvas = document.createElement("canvas");
-      tempCanvas.width = imgWidth;
-      tempCanvas.height = imgHeight;
-      const tempCtx = tempCanvas.getContext("2d");
-      tempCtx.drawImage(imageElem, 0, 0, imgWidth, imgHeight);
-      const imgData = tempCtx.getImageData(0, 0, imgWidth, imgHeight);
-      // Compute grayscale
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const r = imgData.data[i], g = imgData.data[i+1], b = imgData.data[i+2];
-        const lum = 0.299*r + 0.587*g + 0.114*b;
-        imgData.data[i] = imgData.data[i+1] = imgData.data[i+2] = lum;
-      }
-      depthData = imgData.data;
+    // Clear any existing 3D content
+    resultContainer.innerHTML = "";
+    if (renderer) {
+      renderer.dispose();
+      renderer = null;
+    }
+    if (animationId) {
+      cancelAnimationFrame(animationId);
+      animationId = null;
     }
 
-    // Determine plane dimensions and segmentation
-    const aspect = imgWidth / imgHeight;
-    let planeWidth = (aspect >= 1) ? aspect : 1;
-    let planeHeight= (aspect >= 1) ? 1 : (1 / aspect);
-    const baseSegments = 100;
-    let widthSeg  = Math.floor(baseSegments * (planeWidth > 1 ? planeWidth : 1));
-    let heightSeg = Math.floor(baseSegments * (planeHeight> 1 ? planeHeight: 1));
-    widthSeg  = Math.max(widthSeg,  10);
-    heightSeg = Math.max(heightSeg, 10);
+    // (1) Depth Estimation using TensorFlow.js (if available)
+    let depthData = null;
+    try {
+      const depthModel = await tf.depthEstimation.load();  // load Portrait Depth model
+      const imgEl = new Image();
+      imgEl.src = uploadedImageData;
+      await imgEl.decode();
+      const depthMap = await depthModel.predict(imgEl);
+      // depthMap is a tf.Tensor of shape [height, width, 1]; get raw array
+      depthData = depthMap.dataSync();
+    } catch (err) {
+      console.warn("Depth estimation failed (skipping):", err);
+    }
 
-    // Set up Three.js scene
-    clearThreeScene();
+    // (2) Semantic Segmentation using TensorFlow.js (if available)
+    let segMap = null;
+    try {
+      const segModel = await deeplab.load({ base: 'pascal', quantizationBytes: 2 });
+      const segImg = new Image();
+      segImg.src = uploadedImageData;
+      await segImg.decode();
+      const { segmentationMap } = await segModel.segment(segImg);
+      segMap = segmentationMap; // 2D array of class indices [oai_citation:11‡github.com](https://github.com/tensorflow/tfjs-models#:~:text=detection%20API%20.%20,models%2Fdeeplab%60%20source)
+    } catch (err) {
+      console.warn("Segmentation model failed (skipping):", err);
+    }
+
+    // (3) Server-side inpainting for unseen/backside (example)
+    let backImageData = uploadedImageData; // fallback to original
+    try {
+      const response = await fetch('/api/inpaint-backside', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: uploadedImageData })
+      });
+      const result = await response.json();
+      if (result.filledImage) {
+        backImageData = result.filledImage; // assume data URL or URL from backend
+      }
+    } catch (err) {
+      console.warn("Backside inpainting API failed:", err);
+    }
+
+    // (4) Three.js scene setup
+    const width  = resultContainer.clientWidth;
+    const height = resultContainer.clientHeight;
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(resultContainer.clientWidth, resultContainer.clientHeight);
-    resultContainer.innerHTML = ""; // clear old canvas
+    renderer.setSize(width, height);
+    renderer.setClearColor(0x000000, 0);
     resultContainer.appendChild(renderer.domElement);
+
     scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    camera.position.z = 3;
 
-    // Camera
-    camera = new THREE.PerspectiveCamera(45, resultContainer.clientWidth / resultContainer.clientHeight, 0.1, 1000);
-    camera.position.set(0, 0, 3);
-    scene.add(camera);
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(2, 2, 2);
+    scene.add(light);
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(2, 2, 5);
-    scene.add(dirLight);
+    // Create geometry. Here we use a plane; we could also use BoxGeometry.
+    const geometry = new THREE.PlaneGeometry(2, 2, 100, 100);
 
-    // Create plane geometry and displace vertices
-    const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight, widthSeg, heightSeg);
-    const positions = geometry.attributes.position;
-    const uvs = geometry.attributes.uv;
-    for (let i = 0; i < positions.count; i++) {
-      const u = uvs.getX(i);
-      const v = uvs.getY(i);
-      const px = Math.floor(u * (imgWidth - 1));
-      const py = Math.floor((1 - v) * (imgHeight - 1)); // invert Y
-      const idx = (py * imgWidth + px) * 4;
-      const brightness = depthData[idx]; // grayscale => R=G=B
-      // Map brightness to height (invert so black=high, white=low)
-      const heightVal = (1 - brightness / 255) * 0.5;
-      positions.setZ(i, heightVal);
+    // If we have depth data, displace vertices by depth to create relief [oai_citation:12‡blog.tensorflow.org](https://blog.tensorflow.org/2022/05/portrait-depth-api-turning-single-image.html#:~:text=Today%20we%20are%20introducing%20the,photo%203D%20as%20shown%20below)
+    if (depthData) {
+      const positions = geometry.attributes.position.array;
+      // Map depthData (which is [height*width]) onto vertices array
+      for (let i = 0; i < positions.length/3; i++) {
+        const z = depthData[i] * 0.5;  // scale depth effect
+        positions[i*3 + 2] = z;       // set vertex Z
+      }
+      geometry.computeVertexNormals();
     }
-    geometry.computeVertexNormals();
 
-    // Texture: use the original image for color
+    // Load textures for front and back
     const textureLoader = new THREE.TextureLoader();
-    const texture = textureLoader.load(uploadedImage);
-    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const frontTexture = textureLoader.load(uploadedImageData);
+    const backTexture  = textureLoader.load(backImageData);
 
-    // Material with some roughness for realistic look
-    const material = new THREE.MeshStandardMaterial({
-      map: texture,
-      metalness: 0.2,
-      roughness: 0.8,
+    // Material: double-sided to show backside texture as well
+    const material = new THREE.MeshBasicMaterial({
+      map: frontTexture,
       side: THREE.DoubleSide
     });
 
-    // Create mesh
-    mesh3D = new THREE.Mesh(geometry, material);
-    scene.add(mesh3D);
+    mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
 
-    // Orbit controls for interaction
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.1;
-    controls.rotateSpeed = 0.5;
-    controls.minDistance = 1;
-    controls.maxDistance = 10;
-    controls.maxPolarAngle = Math.PI / 2; // limit to top-down view
+    // (Optional) Use segmentation map to create multiple meshes/layers
+    // This would involve splitting the image and geometry by class.
+    // For brevity, we only use a single mesh here.
 
-    // Handle window resize
-    window.addEventListener("resize", () => {
-      const width = resultContainer.clientWidth;
-      const height= resultContainer.clientHeight;
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height);
+    // Enable dragging/touch to rotate the mesh
+    let isDragging = false;
+    let prevPos = { x: 0, y: 0 };
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+      isDragging = true;
+      prevPos.x = e.clientX; prevPos.y = e.clientY;
+    });
+    window.addEventListener("pointerup", () => isDragging = false);
+    window.addEventListener("pointermove", (e) => {
+      if (!isDragging) return;
+      const deltaX = e.clientX - prevPos.x;
+      const deltaY = e.clientY - prevPos.y;
+      mesh.rotation.y += deltaX * 0.005;
+      mesh.rotation.x += deltaY * 0.005;
+      prevPos.x = e.clientX; prevPos.y = e.clientY;
     });
 
     // Animation loop
     function animate() {
       animationId = requestAnimationFrame(animate);
-      controls.update();
       renderer.render(scene, camera);
     }
     animate();
-  }
 
-  // Download PNG of the current canvas view
-  downloadPNGBtn.addEventListener("click", () => {
-    if (!renderer) return;
-    renderer.domElement.toBlob((blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = '3dview.png';
-      a.click();
-    });
+    // Enable Export button now that the scene is ready
+    exportBtn.disabled = false;
+    convertBtn.textContent = "Convert to 3D";
   });
 
-  // Export mesh as GLB using GLTFExporter
-  downloadGLBBtn.addEventListener("click", () => {
-    if (!mesh3D) return;
-    const exporter = new GLTFExporter();
-    exporter.parse(mesh3D, (result) => {
-      let output;
-      if (result instanceof ArrayBuffer) {
-        output = result; // binary glb
-      } else {
-        output = JSON.stringify(result);
-      }
-      const blob = new Blob([output], { type: 'application/octet-stream' });
+  // Export the scene as a .glb file using GLTFExporter [oai_citation:13‡threejs.org](https://threejs.org/docs/examples/en/exporters/GLTFExporter.html#:~:text=,options%20%29%3B)
+  exportBtn.addEventListener("click", () => {
+    if (!scene) return;
+    const exporter = new THREE.GLTFExporter();
+    exporter.parse(scene, (result) => {
+      // `result` is an ArrayBuffer if binary=true
+      const blob = new Blob([result], { type: 'model/gltf-binary' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'model.glb';
       a.click();
+      URL.revokeObjectURL(url);
     }, { binary: true });
   });
 
-  // Initialize UI
-  resetAll();
+  // Initialize
+  resetPreview();
 });
