@@ -2,52 +2,41 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>2D to 3D Converter</title>
-
-  <!-- Stylesheet -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>2D to 3D Converter with AI</title>
   <link rel="stylesheet" href="css/style.css" />
-
-  <!-- Main app script as ES module -->
-  <script type="module" src="js/app.js" defer></script>
+  <!-- Three.js core and GLTFExporter -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/examples/js/exporters/GLTFExporter.js" defer></script>
+  <!-- TensorFlow.js and models for depth & segmentation -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/depth-estimation@latest" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/deeplab@latest" defer></script>
+  <!-- Main application script -->
+  <script src="js/app.js" defer></script>
 </head>
 <body>
   <main>
     <h1>2D to 3D Converter</h1>
-    <p class="description">Upload an image to see it transformed into a 3D mesh.</p>
+    <p>Upload an image, and use AI to generate an interactive 3D model.</p>
 
     <!-- Image upload -->
-    <label for="image-upload" class="upload-label" aria-label="Upload Image">Upload Image</label>
+    <label for="image-upload" class="upload-label">Upload Image</label>
     <input type="file" id="image-upload" accept="image/*" />
 
-    <!-- Preview area -->
-    <div class="preview-container" id="preview-container" aria-live="polite" aria-label="Image preview area">
+    <!-- Preview of the uploaded image -->
+    <div id="preview-container" class="preview-container">
       <div class="preview-placeholder">No image selected</div>
     </div>
 
-    <!-- Control buttons -->
-    <button id="edit-depth-btn" class="secondary-btn" disabled>Edit Depth Map</button>
-    <button id="convert-btn" class="convert-btn" disabled>Convert to 3D</button>
-    <button id="done-edit-btn" class="convert-btn" style="display:none;">Done Editing</button>
+    <!-- Buttons for conversion and export -->
+    <button id="convert-btn" disabled>Convert to 3D</button>
+    <button id="export-btn" disabled>Export 3D Model</button>
 
-    <!-- Painting controls (shown during edit mode) -->
-    <div class="paint-controls" id="paint-controls" style="display:none;">
-      <button id="brush-btn" class="paint-btn">Brush</button>
-      <button id="eraser-btn" class="paint-btn">Eraser</button>
-      <label for="brush-size">Size:</label>
-      <input type="range" id="brush-size" min="1" max="50" value="20" />
-    </div>
-
-    <!-- Export buttons (shown after conversion) -->
-    <button id="download-png-btn" class="export-btn" style="display:none;">Download PNG</button>
-    <button id="download-glb-btn" class="export-btn" style="display:none;">Download 3D (GLB)</button>
-
-    <!-- 3D result area -->
-    <div class="result-container" id="result-container" aria-label="3D model output area"></div>
+    <!-- Container where the 3D scene will be rendered -->
+    <div id="result-container" class="result-container"></div>
   </main>
 
-  <footer>
-    &copy; 2025 2D to 3D Converter — Built with WebGL for GitHub Pages
-  </footer>
+  <footer>&copy; 2025 AI 2D-to-3D Converter</footer>
 </body>
 </html>
