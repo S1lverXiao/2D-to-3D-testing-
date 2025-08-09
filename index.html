@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>2D to 3D Converter with AI</title>
+  <meta name="description" content="Upload a 2D image and generate a 3D model using AI. Powered by Three.js and TensorFlow.js." />
+  <meta name="theme-color" content="#007BFF" />
   <link rel="stylesheet" href="css/style.css" />
   <!-- Three.js core and GLTFExporter -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.min.js" defer></script>
@@ -18,25 +20,51 @@
 <body>
   <main>
     <h1>2D to 3D Converter</h1>
-    <p>Upload an image, and use AI to generate an interactive 3D model.</p>
+    <p class="description">
+      Upload an image and use AI to generate an interactive 3D model.
+    </p>
 
-    <!-- Image upload -->
-    <label for="image-upload" class="upload-label">Upload Image</label>
-    <input type="file" id="image-upload" accept="image/*" />
+    <!-- Image upload section -->
+    <section aria-labelledby="upload-heading">
+      <h2 id="upload-heading" class="visually-hidden">Image Upload</h2>
+      <label for="image-upload" class="upload-label" tabindex="0">Upload Image</label>
+      <input type="file" id="image-upload" accept="image/*" aria-label="Choose an image to convert" />
+    </section>
 
     <!-- Preview of the uploaded image -->
-    <div id="preview-container" class="preview-container">
-      <div class="preview-placeholder">No image selected</div>
-    </div>
+    <section aria-labelledby="preview-heading">
+      <h2 id="preview-heading" class="visually-hidden">Image Preview</h2>
+      <div id="preview-container" class="preview-container" role="region" aria-live="polite">
+        <div class="preview-placeholder" aria-label="No image selected" tabindex="0">No image selected</div>
+      </div>
+    </section>
 
     <!-- Buttons for conversion and export -->
-    <button id="convert-btn" disabled>Convert to 3D</button>
-    <button id="export-btn" disabled>Export 3D Model</button>
+    <section aria-label="Controls">
+      <button id="convert-btn" disabled>Convert to 3D</button>
+      <button id="export-btn" disabled>Export 3D Model</button>
+    </section>
 
-    <!-- Container where the 3D scene will be rendered -->
-    <div id="result-container" class="result-container"></div>
+    <!-- 3D scene rendering area -->
+    <section aria-labelledby="result-heading">
+      <h2 id="result-heading" class="visually-hidden">3D Model Output</h2>
+      <div id="result-container" class="result-container" role="region" aria-live="polite"></div>
+    </section>
   </main>
 
-  <footer>&copy; 2025 AI 2D-to-3D Converter</footer>
+  <footer>
+    &copy; 2025 AI 2D-to-3D Converter
+  </footer>
+
+  <!-- Fallback for users with JavaScript disabled -->
+  <noscript>
+    <style>
+      .upload-label, #convert-btn, #export-btn { display: none !important; }
+      .preview-placeholder { color: #b00; font-weight: bold; }
+    </style>
+    <div class="preview-placeholder">
+      JavaScript is required for this application to function.
+    </div>
+  </noscript>
 </body>
 </html>
