@@ -152,6 +152,8 @@ footer {
     aspect-ratio: 1 / 1;
   }
 }
+
+/* Visually hidden utility for accessibility */
 .visually-hidden {
   position: absolute !important;
   width: 1px !important;
