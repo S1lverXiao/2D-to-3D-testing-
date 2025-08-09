@@ -1,12 +1,26 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  const uploadInput   = document.getElementById("image-upload");
-  const convertBtn    = document.getElementById("convert-btn");
-  const exportBtn     = document.getElementById("export-btn");
+  const uploadInput      = document.getElementById("image-upload");
+  const convertBtn       = document.getElementById("convert-btn");
+  const exportBtn        = document.getElementById("export-btn");
   const previewContainer = document.getElementById("preview-container");
   const resultContainer  = document.getElementById("result-container");
 
   let uploadedImageData = null; // Data URL of the uploaded image
   let renderer, scene, camera, mesh, animationId;
+
+  // Utility: Announce status to screen readers
+  function announceStatus(message) {
+    let statusDiv = document.getElementById("aria-status");
+    if (!statusDiv) {
+      statusDiv = document.createElement("div");
+      statusDiv.id = "aria-status";
+      statusDiv.setAttribute("role", "status");
+      statusDiv.setAttribute("aria-live", "polite");
+      statusDiv.className = "visually-hidden";
+      document.body.appendChild(statusDiv);
+    }
+    statusDiv.textContent = message;
+  }
 
   // Reset the preview and 3D scene
   function resetPreview() {
@@ -15,6 +29,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     exportBtn.disabled = true;
     if (renderer) {
       renderer.dispose();
+      renderer.forceContextLoss && renderer.forceContextLoss();
+      renderer.domElement && renderer.domElement.remove();
       renderer = null;
     }
     if (animationId) {
@@ -23,6 +39,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     resultContainer.innerHTML = "";
     uploadedImageData = null;
+    announceStatus("Ready for image upload.");
   }
 
   // Handle file upload and show preview
@@ -47,20 +64,36 @@ document.addEventListener("DOMContentLoaded", async () => {
       // Enable the Convert button
       convertBtn.disabled = false;
       exportBtn.disabled = true;
+      announceStatus("Image uploaded. Ready to convert.");
     };
     reader.readAsDataURL(file);
   });
+
+  // Handle window resizing for 3D canvas
+  function resizeRenderer() {
+    if (renderer && resultContainer && camera) {
+      const width  = resultContainer.clientWidth;
+      const height = resultContainer.clientHeight;
+      renderer.setSize(width, height, false);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    }
+  }
+  window.addEventListener("resize", resizeRenderer);
 
   // Convert the 2D image into a 3D model
   convertBtn.addEventListener("click", async () => {
     if (!uploadedImageData) return;
     convertBtn.disabled = true;
     convertBtn.textContent = "Processing...";
+    announceStatus("Converting image to 3D, please wait...");
 
     // Clear any existing 3D content
     resultContainer.innerHTML = "";
     if (renderer) {
       renderer.dispose();
+      renderer.forceContextLoss && renderer.forceContextLoss();
+      renderer.domElement && renderer.domElement.remove();
       renderer = null;
     }
     if (animationId) {
@@ -76,10 +109,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       imgEl.src = uploadedImageData;
       await imgEl.decode();
       const depthMap = await depthModel.predict(imgEl);
-      // depthMap is a tf.Tensor of shape [height, width, 1]; get raw array
       depthData = depthMap.dataSync();
     } catch (err) {
       console.warn("Depth estimation failed (skipping):", err);
+      announceStatus("Depth estimation unavailable; continuing without depth data.");
     }
 
     // (2) Semantic Segmentation using TensorFlow.js (if available)
@@ -90,7 +123,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       segImg.src = uploadedImageData;
       await segImg.decode();
       const { segmentationMap } = await segModel.segment(segImg);
-      segMap = segmentationMap; // 2D array of class indices [oai_citation:11‡github.com](https://github.com/tensorflow/tfjs-models#:~:text=detection%20API%20.%20,models%2Fdeeplab%60%20source)
+      segMap = segmentationMap;
     } catch (err) {
       console.warn("Segmentation model failed (skipping):", err);
     }
@@ -105,15 +138,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
       const result = await response.json();
       if (result.filledImage) {
-        backImageData = result.filledImage; // assume data URL or URL from backend
+        backImageData = result.filledImage;
       }
     } catch (err) {
       console.warn("Backside inpainting API failed:", err);
     }
 
     // (4) Three.js scene setup
-    const width  = resultContainer.clientWidth;
-    const height = resultContainer.clientHeight;
+    const width  = resultContainer.clientWidth || 512;
+    const height = resultContainer.clientHeight || 512;
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setClearColor(0x000000, 0);
@@ -127,16 +160,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     light.position.set(2, 2, 2);
     scene.add(light);
 
-    // Create geometry. Here we use a plane; we could also use BoxGeometry.
+    // Create geometry. Here we use a plane; could use BoxGeometry or others.
     const geometry = new THREE.PlaneGeometry(2, 2, 100, 100);
 
-    // If we have depth data, displace vertices by depth to create relief [oai_citation:12‡blog.tensorflow.org](https://blog.tensorflow.org/2022/05/portrait-depth-api-turning-single-image.html#:~:text=Today%20we%20are%20introducing%20the,photo%203D%20as%20shown%20below)
+    // If we have depth data, displace vertices by depth to create relief
     if (depthData) {
       const positions = geometry.attributes.position.array;
-      // Map depthData (which is [height*width]) onto vertices array
-      for (let i = 0; i < positions.length/3; i++) {
+      for (let i = 0; i < positions.length / 3; i++) {
         const z = depthData[i] * 0.5;  // scale depth effect
-        positions[i*3 + 2] = z;       // set vertex Z
+        positions[i * 3 + 2] = z;
       }
       geometry.computeVertexNormals();
     }
@@ -155,26 +187,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     mesh = new THREE.Mesh(geometry, material);
     scene.add(mesh);
 
-    // (Optional) Use segmentation map to create multiple meshes/layers
-    // This would involve splitting the image and geometry by class.
-    // For brevity, we only use a single mesh here.
-
     // Enable dragging/touch to rotate the mesh
     let isDragging = false;
     let prevPos = { x: 0, y: 0 };
-    renderer.domElement.addEventListener("pointerdown", (e) => {
+    renderer.domElement.onpointerdown = (e) => {
       isDragging = true;
       prevPos.x = e.clientX; prevPos.y = e.clientY;
-    });
-    window.addEventListener("pointerup", () => isDragging = false);
-    window.addEventListener("pointermove", (e) => {
+    };
+    window.onpointerup = () => isDragging = false;
+    window.onpointermove = (e) => {
       if (!isDragging) return;
       const deltaX = e.clientX - prevPos.x;
       const deltaY = e.clientY - prevPos.y;
       mesh.rotation.y += deltaX * 0.005;
       mesh.rotation.x += deltaY * 0.005;
       prevPos.x = e.clientX; prevPos.y = e.clientY;
-    });
+    };
 
     // Animation loop
     function animate() {
@@ -186,14 +214,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Enable Export button now that the scene is ready
     exportBtn.disabled = false;
     convertBtn.textContent = "Convert to 3D";
+    announceStatus("3D model ready. You can now export.");
+    exportBtn.focus();
   });
 
-  // Export the scene as a .glb file using GLTFExporter [oai_citation:13‡threejs.org](https://threejs.org/docs/examples/en/exporters/GLTFExporter.html#:~:text=,options%20%29%3B)
+  // Export the scene as a .glb file using GLTFExporter
   exportBtn.addEventListener("click", () => {
     if (!scene) return;
+    announceStatus("Exporting 3D model...");
     const exporter = new THREE.GLTFExporter();
     exporter.parse(scene, (result) => {
-      // `result` is an ArrayBuffer if binary=true
       const blob = new Blob([result], { type: 'model/gltf-binary' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -201,6 +231,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       a.download = 'model.glb';
       a.click();
       URL.revokeObjectURL(url);
+      announceStatus("Download complete.");
+      exportBtn.focus();
     }, { binary: true });
   });
 
